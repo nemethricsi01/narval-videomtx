@@ -1,0 +1,5 @@
+dependencies:
+  lvgl/lvgl: 9.3.0
+  espressif/knob: ">=0.1.0"
+  espressif/button: ">=4.1.0"
+  cherry-embedded/cherryusb: ">=1.4.0"

@@ -1,0 +1,68 @@
+dependencies:
+  cherry-embedded/cherryusb:
+    component_hash: ec3fda70779076a4a996abc52684fcafe4c61b269b722b775562f96c042c08f6
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32s2
+    - esp32s3
+    - esp32p4
+    version: 1.5.2~2
+  espressif/button:
+    component_hash: d0afa32f0e50d60bc0c6fc23f7eea98adc6b02cfe70b590bc52c23c506745287
+    dependencies:
+    - name: espressif/cmake_utilities
+      registry_url: https://components.espressif.com
+      require: private
+      version: '*'
+    - name: idf
+      require: private
+      version: '>=4.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 4.1.6
+  espressif/cmake_utilities:
+    component_hash: 05165f30922b422b4b90c08845e6d449329b97370fbd06309803d8cb539d79e3
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.1'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 1.1.1
+  espressif/knob:
+    component_hash: ae98c9fa15bfb223c7586d2b82fdd9dfa98940118d12b8ae7bdded630cdb8f40
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4.1'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.1.1
+  idf:
+    source:
+      type: idf
+    version: 6.0.0
+  lvgl/lvgl:
+    component_hash: b702d642e03e95928046d5c6726558e6444e112420c77efa5fdb6650b0a13c5d
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 9.3.0
+direct_dependencies:
+- cherry-embedded/cherryusb
+- espressif/button
+- espressif/knob
+- lvgl/lvgl
+manifest_hash: 05b79536554ff6caf3e4f5898593f608fb968c87a419bebba38557e5df4f68de
+target: esp32s3
+version: 3.0.0
