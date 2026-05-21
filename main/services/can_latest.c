@@ -435,7 +435,7 @@ void can_latest_update(const can_frame_t *frame)
         return;
 
     bool prefer_red = (event.type == BUTTON_TYPE_CSEND);
-    uint8_t col = resolve_col(event.dev_addr, prefer_red);
+    uint8_t col = resolve_col(event, prefer_red);
     if (col == 0xFF)
         return;
 
@@ -451,7 +451,9 @@ void can_latest_update(const can_frame_t *frame)
     }
 
     int16_t whichLed = event.button_id - s_cols[col].base_addr;
-    if (whichLed < 0 || (uint8_t)whichLed >= s_cols[col].len || (s_cols[col].mode == MODE_6STEP && whichLed >= 2)||(s_cols[col].mode == MODE_NORMAL && whichLed >= 1))
+    if (whichLed < 0 || (uint8_t)whichLed >= s_cols[col].len
+        || ((s_cols[col].mode == MODE_6STEP        || s_cols[col].mode == MODE_6STEP_SECONDARY)   && whichLed >= 4)
+        || ((s_cols[col].mode == MODE_NORMAL        || s_cols[col].mode == MODE_NORMAL_SECONDARY)  && whichLed >= 2))
     {
         ESP_LOGE(TAG, "button_id %d OOR col %d (base=%d len=%d)",
                  event.button_id, col, s_cols[col].base_addr, s_cols[col].len);
@@ -461,54 +463,55 @@ void can_latest_update(const can_frame_t *frame)
 
     if (s_cols[col].mode == MODE_RADIO_GREEN || s_cols[col].mode == MODE_RADIO_RED)
     {
-        bool is_green = (s_cols[col].mode == MODE_RADIO_GREEN);
         sel_idx = (uint8_t)whichLed;
-        for (uint8_t led = 0; led < s_cols[col].len; led++)
-        {
-            uint8_t byte_idx = led / 4;
-            uint8_t bit = is_green ? (led % 4) * 2 : (led % 4) * 2 + 1;
-            if (led == (uint8_t)whichLed)
-                LedBuff[byte_idx] |= (1u << bit);
-            else
-                LedBuff[byte_idx] &= ~(1u << bit);
-        }
     }
-    else if (s_cols[col].mode == MODE_NORMAL)
+    else if (s_cols[col].mode == MODE_NORMAL || s_cols[col].mode == MODE_NORMAL_SECONDARY)
     {
         sel_idx = s_cols[col].ptr;
-        s_cols[col].leds[0] = s_cols[col].buf[s_cols[col].ptr++];
-        if (s_cols[col].ptr >= s_cols[col].len)
-            s_cols[col].ptr = 0;
-        LedBuff[0] = s_cols[col].leds[0];
+        if (++s_cols[col].ptr >= s_cols[col].len) s_cols[col].ptr = 0;
     }
     else if (s_cols[col].mode == MODE_6STEP)
     {
         uint8_t half = s_cols[col].len / 2;
         if (whichLed == 0)
         {
-            if (s_cols[col].ptr >= half)
-                s_cols[col].ptr = 0;
+            if (s_cols[col].ptr >= half) s_cols[col].ptr = 0;
             sel_idx = s_cols[col].ptr;
-            s_cols[col].leds[0] = s_cols[col].buf[s_cols[col].ptr++];
-            if (s_cols[col].ptr >= half)
-                s_cols[col].ptr = 0;
+            s_cols[col].leds[0] = sel_idx;
+            if (++s_cols[col].ptr >= half) s_cols[col].ptr = 0;
         }
         else
         {
-            if (s_cols[col].ptr < half)
-                s_cols[col].ptr = half;
+            if (s_cols[col].ptr < half) s_cols[col].ptr = half;
             sel_idx = s_cols[col].ptr;
-            s_cols[col].leds[0] = s_cols[col].buf[s_cols[col].ptr++];
-            if (s_cols[col].ptr >= s_cols[col].len)
-                s_cols[col].ptr = half;
+            s_cols[col].leds[1] = sel_idx;
+            if (++s_cols[col].ptr >= s_cols[col].len) s_cols[col].ptr = half;
         }
-        LedBuff[0] = s_cols[col].leds[0] << (whichLed * 2);
     }
-
-    ESP_LOG_BUFFER_HEX(TAG, LedBuff, sizeof(LedBuff));
-    if (sel_idx != 0xFF)
-    videomtx_set(col, s_cols[col].rows[sel_idx]);
-    send_to_col_addrs(col);
+    else if (s_cols[col].mode == MODE_6STEP_SECONDARY)
+    {
+        uint8_t half = s_cols[col].len / 2;
+        if (whichLed == 2)
+        {
+            if (s_cols[col].ptr >= half) s_cols[col].ptr = 0;
+            sel_idx = s_cols[col].ptr;
+            s_cols[col].leds[0] = sel_idx;
+            if (++s_cols[col].ptr >= half) s_cols[col].ptr = 0;
+        }
+        else  // whichLed == 3
+        {
+            if (s_cols[col].ptr < half) s_cols[col].ptr = half;
+            sel_idx = s_cols[col].ptr;
+            s_cols[col].leds[1] = sel_idx;
+            if (++s_cols[col].ptr >= s_cols[col].len) s_cols[col].ptr = half;
+        }
+    }
+    if (sel_idx != 0xFF) {
+        s_cols[col].sel_idx = sel_idx;
+        videomtx_set(col, s_cols[col].rows[sel_idx]);
+    }
+    fill_ledbuff(col);
+    send_to_col_addrs(col, false);
 }
 
 // Returns the latest received frame into *out.
