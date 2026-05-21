@@ -28,3 +28,17 @@ bool can_latest_get(can_frame_t *out);
  * and other per-column configuration used at runtime.
  */
 void can_latest_configure(void);
+
+/**
+ * Send the current state of every configured column to its device addresses.
+ * slow=true adds a 15 ms inter-frame delay — use at startup to avoid exhausting
+ * the TX pool.  Pass slow=false for runtime refresh requests.
+ */
+void can_latest_broadcast(bool slow);
+
+/**
+ * Print all configured column state (mode, base_addr, addrs, states) via ESP_LOGI.
+ * Call after can_latest_configure() for startup diagnostics.
+ */
+void can_latest_dump(void);
+
