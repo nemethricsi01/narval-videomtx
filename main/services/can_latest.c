@@ -28,18 +28,19 @@ typedef struct
     uint8_t dev_addr;
 } button_event_t;
 
-// LED sequence: buf holds the ordered LED indices for one mode,
+// LED sequence: led_order holds the ordered LED indices for one mode,
 // ptr cycles through them as button presses arrive.
 typedef struct
 {
-    uint8_t buf[MAX_SEQ_LEN];  // LED indices to cycle through
+    uint8_t led_order[MAX_SEQ_LEN];  // LED indices to cycle through
     uint8_t leds[MAX_SEQ_LEN]; //
     uint8_t len;               // valid entries: 4=Normal, 6=6Step, up to 16=Radio
-    uint8_t ptr;               // current position in buf
+    uint8_t ptr;               // current position in led_order
+    uint8_t sel_idx;           // last-sent index into led_order (used for broadcast)
     uint8_t addrToSendTo[4];   // device addresses to send updates to for this column
     uint8_t mode;              // MODE_NORMAL / MODE_6STEP / MODE_RADIO_GREEN / MODE_RADIO_RED
     uint8_t base_addr;         // first LED layer address (PROP_LED_BASE_ADDR)
-    uint8_t rows[MAX_SEQ_LEN]; // matrix row index for each buf entry
+    uint8_t rows[MAX_SEQ_LEN]; // matrix row index for each led_order entry
 } led_seq_t;
 
 static led_seq_t s_cols[16];             // one per column
@@ -87,11 +88,11 @@ void can_latest_configure(void)
                 if (color > 0)
                 {
                     s_cols[col].rows[s_cols[col].len] = row;
-                    s_cols[col].buf[s_cols[col].len++] = color - 1;
+                    s_cols[col].led_order[s_cols[col].len++] = color - 1;
                 }
             }
         }
-        else if (mode == MODE_6STEP)
+        else if (mode == MODE_6STEP || mode == MODE_6STEP_SECONDARY)
         {
             for (uint8_t row = 0; row < 16 && s_cols[col].len < 6; row++) // loop rows until we have 6 states for this column
             {
@@ -99,7 +100,7 @@ void can_latest_configure(void)
                 if (color > 0)
                 {
                     s_cols[col].rows[s_cols[col].len] = row;
-                    s_cols[col].buf[s_cols[col].len++] = color - 1;
+                    s_cols[col].led_order[s_cols[col].len++] = color - 1;
                 }
             }
         }
@@ -111,7 +112,7 @@ void can_latest_configure(void)
                 if (color > 0)
                 {
                     s_cols[col].rows[s_cols[col].len] = row;
-                    s_cols[col].buf[s_cols[col].len++] = color - 1;
+                    s_cols[col].led_order[s_cols[col].len++] = color - 1;
                 }
             }
         }
