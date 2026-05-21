@@ -46,6 +46,7 @@ static void on_encoder_event(encoder_event_t event, void *user_data)
 
 void app_main(void)
 {
+    vTaskDelay(pdMS_TO_TICKS(1000)); // let the dust settle after boot
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -66,6 +67,8 @@ void app_main(void)
     ESP_ERROR_CHECK(can_service_init(can_node));
     prog_init();
     can_latest_configure();
+    can_latest_dump();
+    can_latest_broadcast(true);
 #ifdef USB_BRIDGE_ENABLED
     ESP_ERROR_CHECK(usb_bridge_init());
 #endif

@@ -127,7 +127,8 @@ void can_latest_configure(void)
         s_cols[col].base_addr = column_props_get(col_props, col, PROP_LED_BASE_ADDR);
         s_cols[col].len = 0;
         s_cols[col].ptr = 0;
-        if (mode == MODE_NORMAL)
+        s_cols[col].sel_idx = 0;
+        if (mode == MODE_NORMAL || mode == MODE_NORMAL_SECONDARY)
         {
             for (uint8_t row = 0; row < 16 && s_cols[col].len < 4; row++) // loop rows until we have 4 states for this column
             {
