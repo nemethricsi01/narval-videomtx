@@ -422,8 +422,14 @@ void can_latest_update(const can_frame_t *frame)
 
     uint8_t sel_idx = 0xFF;
 
-    if (frame->header.dlc != 4 || frame->data[3] != 0x18)
+    if (frame->header.dlc != 4 || frame->data[3] != 0x18 || frame->data[1] != 0x4)
         return;
+
+    if(frame->data[1] == 0x4 && frame->data[3] == 0x18)
+       {
+        can_latest_broadcast(true);
+        return;
+       }
 
     button_event_t event = {
         .button_id = frame->data[2] + 1,
