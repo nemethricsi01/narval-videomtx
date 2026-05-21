@@ -133,10 +133,12 @@
 #define COLUMN_PROPS_BYTES (NUM_COLUMNS * NUM_PROPERTIES)  /* 96 */
 
 /* prop[0] — Button Mode values */
-#define MODE_NORMAL       0  /* 1 button, up to 4 steps (GREEN/RED/YELLOW/BLACK) */
-#define MODE_6STEP        1  /* 2 buttons, 6 steps (2x GREEN, 2x RED, 2x YELLOW) */
-#define MODE_RADIO_GREEN  2  /* radiobutton bank, green LED per group */
-#define MODE_RADIO_RED    3  /* radiobutton bank, red LED per group */
+#define MODE_NORMAL            0  /* 1 button, up to 4 steps (GREEN/RED/YELLOW/BLACK) */
+#define MODE_6STEP             1  /* 2 buttons, 6 steps (2x GREEN, 2x RED, 2x YELLOW) */
+#define MODE_RADIO_GREEN       2  /* radiobutton bank, green LED per group */
+#define MODE_RADIO_RED         3  /* radiobutton bank, red LED per group */
+#define MODE_NORMAL_SECONDARY  4  /* same as MODE_NORMAL; LED group base address is +1 */
+#define MODE_6STEP_SECONDARY   5  /* same as MODE_6STEP; LED group base address is +2 */
 
 /* prop index names for readability */
 #define PROP_MODE          0
