@@ -3,6 +3,7 @@
 #include "services/settings.h"
 #include "services/can_monitor.h"
 #include "services/videomtx.h"
+#include "services/can_latest.h"
 #include "drivers/encoder.h"
 #include "esp_log.h"
 #include <stdio.h>
@@ -102,7 +103,6 @@ static void brightness_refresh(void)
     snprintf(buf, sizeof(buf), "%d%%", s_brightness_pct);
     lv_label_set_text(s_brightness_label, buf);
     display_set_brightness((uint8_t)s_brightness_pct);
-    ESP_LOGI(TAG, " refresh brightness set to %d%%", s_brightness_pct);
 }
 
 static void brightness_step(int dir)
@@ -484,6 +484,7 @@ void ui_encoder_event(void *arg)
             if (s_mtx_edit) {
                 s_mtx_edit = false;
                 videomtx_set_silent((uint8_t)s_mtx_sel, s_mtx_route[s_mtx_sel]);
+                can_latest_notify_route((uint8_t)s_mtx_sel);
                 mtx_cell_refresh(s_mtx_sel);
             } else {
                 s_mtx_edit_saved = s_mtx_route[s_mtx_sel];

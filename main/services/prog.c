@@ -31,6 +31,8 @@ static uint8_t s_stage_matrix[PROG_MATRIX_LEN];    /* staging */
 static uint8_t s_stage_props[PROG_COL_PROPS_LEN];  /* staging */
 static bool    s_has_staged;
 
+static void (*s_commit_notify)(void) = NULL;
+
 /* TX frame buffer — plain RAM is fine; cdc_write() copies into DMA buffer */
 static uint8_t s_tx_frame[2 + 1 + PROG_PAYLOAD_LEN + 2]; /* 229 bytes */
 
@@ -120,7 +122,8 @@ static void handle_commit(void)
     READ_OR_ABORT(&e1, 500);
     if (e0 != EOF0 || e1 != EOF1) { s_has_staged = false; return; }
 
-    if (s_has_staged) {
+    bool committed = s_has_staged;
+    if (committed) {
         memcpy(s_matrix,    s_stage_matrix, PROG_MATRIX_LEN);
         memcpy(s_col_props, s_stage_props,  PROG_COL_PROPS_LEN);
         nvs_save();
@@ -130,6 +133,10 @@ static void handle_commit(void)
         ESP_LOGW(TAG, "COMMIT with no staged data");
     }
     send_frame(CMD_COMMIT, NULL, 0);
+
+    // Let the host's COMMIT ack go out first — the notify callback may take
+    // a while (can_latest_reconfigure broadcasts to every configured column).
+    if (committed && s_commit_notify) s_commit_notify();
 }
 
 static void handle_abort(void)
@@ -195,3 +202,8 @@ void prog_poll(void)
 
 const uint8_t *prog_get_matrix(void)    { return s_matrix; }
 const uint8_t *prog_get_col_props(void) { return s_col_props; }
+
+void prog_set_commit_notify(void (*fn)(void))
+{
+    s_commit_notify = fn;
+}

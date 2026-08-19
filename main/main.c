@@ -66,9 +66,8 @@ void app_main(void)
     ESP_ERROR_CHECK(twai_can_init(&can_node));
     ESP_ERROR_CHECK(can_service_init(can_node));
     prog_init();
-    can_latest_configure();
-    can_latest_dump();
-    can_latest_broadcast(true);
+    can_latest_reconfigure();
+    prog_set_commit_notify(can_latest_reconfigure); // live-apply future USB config uploads, no reboot needed
 #ifdef USB_BRIDGE_ENABLED
     ESP_ERROR_CHECK(usb_bridge_init());
 #endif

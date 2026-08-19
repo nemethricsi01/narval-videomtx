@@ -37,3 +37,12 @@ const uint8_t *prog_get_matrix(void);
  * Valid indefinitely; updated only on COMMIT.
  */
 const uint8_t *prog_get_col_props(void);
+
+/**
+ * Register a callback that fires right after a successful COMMIT (new
+ * matrix + column properties saved to NVS and made active). Lets other
+ * subsystems — e.g. can_latest — pick up the new config live, without a
+ * reboot. Call before usb_bridge_init() so it's registered before a COMMIT
+ * can actually land.
+ */
+void prog_set_commit_notify(void (*fn)(void));

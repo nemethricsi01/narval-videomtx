@@ -21,6 +21,15 @@ void can_mon_init(void);
  */
 void can_mon_push(const can_frame_t *f, bool is_tx, bool is_usb);
 
+/**
+ * Same as can_mon_push() but must be called only from within the LVGL task
+ * (e.g. from ui_encoder_event). Skips display_lock() because the LVGL task
+ * already holds it — calling the regular variant from there deadlocks.
+ * Does not schedule a refresh; the caller is already in the LVGL task and
+ * can refresh directly if needed.
+ */
+void can_mon_push_from_ui(const can_frame_t *f, bool is_tx, bool is_usb);
+
 /** Push a visual separator line ("---...---") into the ring buffer. */
 void can_mon_push_separator(void);
 

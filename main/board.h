@@ -39,6 +39,25 @@
 // ---- DS3231 SQW (1 Hz interrupt) ------------------------------------------
 #define BOARD_PIN_RTC_SQW  17
 
+// ---- Video crosspoint switch IC (SPI3, dedicated — no other device on it) -
+#define BOARD_MTX_SPI_HOST        SPI3_HOST
+#define BOARD_MTX_CLOCK_HZ       (1 * 1000 * 1000)  // TODO: confirm against the IC's datasheet
+#define BOARD_PIN_MTX_SCLK        1  // TODO: set to the MTX SCLK GPIO
+#define BOARD_PIN_MTX_MOSI        14  // TODO: set to the MTX MOSI GPIO
+#define BOARD_PIN_MTX_MISO        2  // leave -1 if unwired (device looks write-only)
+#define BOARD_PIN_MTX_CS          47
+#define BOARD_PIN_MTX_UPDATE      8
+#define BOARD_PIN_MTX_RESET       21
+
+// ---- Video routing UART mirror (parallel to the crosspoint IC) ------------
+// TX-only, one frame per crosspoint change: [0x55][addr][channel][0xAA].
+// UART1 chosen deliberately (not UART0) — this project doesn't open any
+// UART itself, but UART0 may be claimed by the system console depending on
+// sdkconfig, so UART1 avoids that ambiguity entirely.
+#define BOARD_VIDEO_UART_PORT      UART_NUM_1
+#define BOARD_VIDEO_UART_BAUD      115200  // TODO: confirm against whatever's listening
+#define BOARD_PIN_VIDEO_UART_TX    39
+
 // ---- Rotary encoder -------------------------------------------------------
 #define BOARD_PIN_ENC_A           40
 #define BOARD_PIN_ENC_B           41
@@ -48,4 +67,4 @@
 // ---- Debug switch ---------------------------------------------------------
 // Comment out to disable the USB CDC bridge and free the USB OTG peripheral
 // for the built-in USB-Serial/JTAG debug interface.
-// #define USB_BRIDGE_ENABLED
+#define USB_BRIDGE_ENABLED

@@ -33,7 +33,6 @@ typedef struct
 typedef struct
 {
     uint8_t led_order[MAX_SEQ_LEN];  // LED indices to cycle through
-    uint8_t leds[MAX_SEQ_LEN]; //
     uint8_t len;               // valid entries: 4=Normal, 6=6Step, up to 16=Radio
     uint8_t ptr;               // current position in led_order
     uint8_t sel_idx;           // last-sent index into led_order (used for broadcast)
@@ -62,6 +61,39 @@ void can_latest_init(void)
     assert(s_mutex);
 }
 
+// Finds which of col's configured states currently matches videomtx's route.
+// Returns 0xFF if the routed input isn't one of this column's known states —
+// the UI can route to any of the 16 inputs, but a column only knows about
+// the rows its matrix config actually gave it.
+static uint8_t find_col_state_for_route(uint8_t col)
+{
+    uint8_t target_row = videomtx_get(col);
+    for (uint8_t i = 0; i < s_cols[col].len; i++) {
+        if (s_cols[col].rows[i] == target_row) return i;
+    }
+    return 0xFF;
+}
+
+// Applies `found` as col's sel_idx and recomputes ptr so the next button
+// press resumes cycling from the right spot.
+static void apply_col_state(uint8_t col, uint8_t found)
+{
+    s_cols[col].sel_idx = found;
+
+    uint8_t mode = s_cols[col].mode;
+    if (mode == MODE_NORMAL || mode == MODE_NORMAL_SECONDARY) {
+        s_cols[col].ptr = (found + 1 >= s_cols[col].len) ? 0 : found + 1;
+    } else if (mode == MODE_6STEP || mode == MODE_6STEP_SECONDARY) {
+        uint8_t half = s_cols[col].len / 2;
+        if (found < half) {
+            s_cols[col].ptr = (found + 1 >= half) ? 0 : found + 1;
+        } else {
+            s_cols[col].ptr = (found + 1 >= s_cols[col].len) ? half : found + 1;
+        }
+    }
+    // RADIO: ptr unused for cycling, leave as-is
+}
+
 // Reads the saved vmtx crosspoints and resolves sel_idx / ptr for every column
 // so that can_latest_broadcast() will send the correct initial LED states.
 // Called at end of can_latest_configure().
@@ -72,40 +104,15 @@ static void vmtx_to_cols(void)
         if (s_cols[col].len == 0)
             continue;
 
-        uint8_t target_row = videomtx_get(col); // which input row this output is routed to
-
-        // Search rows[] for the matching entry
-        uint8_t found = 0xFF;
-        for (uint8_t i = 0; i < s_cols[col].len; i++) {
-            if (s_cols[col].rows[i] == target_row) { found = i; break; }
-        }
+        uint8_t found = find_col_state_for_route(col);
         if (found == 0xFF) {
-            ESP_LOGW(TAG, "col %d: vmtx row %d not in states, defaulting to 0", col, target_row);
+            ESP_LOGW(TAG, "col %d: vmtx row %d not in states, defaulting to 0", col, videomtx_get(col));
             found = 0;
         }
-
-        s_cols[col].sel_idx = found;
-
-        // ptr = next state to show on the next button press
-        uint8_t mode = s_cols[col].mode;
-        if (mode == MODE_NORMAL || mode == MODE_NORMAL_SECONDARY) {
-            s_cols[col].ptr = (found + 1 >= s_cols[col].len) ? 0 : found + 1;
-        } else if (mode == MODE_6STEP || mode == MODE_6STEP_SECONDARY) {
-            uint8_t half = s_cols[col].len / 2;
-            if (found < half) {
-                s_cols[col].leds[0] = found;   // button A's display index
-                s_cols[col].leds[1] = half;    // button B at start of its half
-                s_cols[col].ptr = (found + 1 >= half) ? 0 : found + 1;
-            } else {
-                s_cols[col].leds[0] = 0;       // button A at start
-                s_cols[col].leds[1] = found;   // button B's display index
-                s_cols[col].ptr = (found + 1 >= s_cols[col].len) ? half : found + 1;
-            }
-        }
-        // RADIO: ptr unused for cycling, leave at 0
+        apply_col_state(col, found);
 
         ESP_LOGI(TAG, "vmtx_to_cols: col %d vmtx_row=%d -> idx=%d ptr=%d",
-                 col, target_row, found, s_cols[col].ptr);
+                 col, videomtx_get(col), found, s_cols[col].ptr);
     }
 }
 
@@ -265,7 +272,10 @@ static uint8_t resolve_col(button_event_t event, bool prefer_red)
 // Sends one frame for ≤8 LEDs, two frames for >8.
 // slow=true adds a 15 ms delay after each frame — use during startup to avoid
 // exhausting the TX pool at the low CAN bitrate (~9785 bps, ~10 ms/frame).
-static void send_to_col_addrs(uint8_t col, bool slow)
+// from_ui=true must be set when calling from the LVGL task (e.g. via
+// can_latest_notify_route()) — it routes the monitor push through
+// can_mon_push_from_ui() to avoid a display_lock() self-deadlock.
+static void send_to_col_addrs(uint8_t col, bool slow, bool from_ui)
 {
     uint8_t base_addr = s_cols[col].base_addr;
 
@@ -282,7 +292,7 @@ static void send_to_col_addrs(uint8_t col, bool slow)
         tx.data[3] = baseAddressToLedLayer(base_addr);
         esp_err_t ret = can_service_send(&tx, 100);
         if (ret == ESP_OK)
-            can_mon_push(&tx, true, false);
+            from_ui ? can_mon_push_from_ui(&tx, true, false) : can_mon_push(&tx, true, false);
         else
             ESP_LOGE(TAG, "TX failed: %s", esp_err_to_name(ret));
         if (slow) vTaskDelay(pdMS_TO_TICKS(15));
@@ -295,7 +305,7 @@ static void send_to_col_addrs(uint8_t col, bool slow)
             ret = can_service_send(&tx, 100);
             ESP_LOG_BUFFER_HEX(TAG, tx.data, 4);
             if (ret == ESP_OK)
-                can_mon_push(&tx, true, false);
+                from_ui ? can_mon_push_from_ui(&tx, true, false) : can_mon_push(&tx, true, false);
             else
                 ESP_LOGE(TAG, "TX failed: %s", esp_err_to_name(ret));
             if (slow) vTaskDelay(pdMS_TO_TICKS(15));
@@ -354,43 +364,41 @@ static void fill_ledbuff(uint8_t col)
     }
     else if (mode == MODE_6STEP)
     {
-        uint8_t half  = s_cols[col].len / 2;
-        uint8_t idx_a = s_cols[col].leds[0];
-        uint8_t idx_b = s_cols[col].leds[1];
-        if (idx_a < half)
-            LedBuff[0] |= s_cols[col].led_order[idx_a] & 0x03;
-        if (idx_b >= half && idx_b < s_cols[col].len)
-            LedBuff[0] |= (s_cols[col].led_order[idx_b] << 2) & 0x0C;
+        uint8_t half = s_cols[col].len / 2;
+        if (idx < half)
+            LedBuff[0] |= s_cols[col].led_order[idx] & 0x03;
+        else
+            LedBuff[0] |= (s_cols[col].led_order[idx] << 2) & 0x0C;
         for (uint8_t c = 0; c < 16; c++) {
             if (c == col || s_cols[c].mode != MODE_6STEP_SECONDARY || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
+            uint8_t ci = s_cols[c].sel_idx;
             uint8_t ch = s_cols[c].len / 2;
-            uint8_t ca = s_cols[c].leds[0];
-            uint8_t cb = s_cols[c].leds[1];
-            if (ca < ch)
-                LedBuff[0] |= (s_cols[c].led_order[ca] << 4) & 0x30;
-            if (cb >= ch && cb < s_cols[c].len)
-                LedBuff[0] |= (s_cols[c].led_order[cb] << 6) & 0xC0;
+            if (ci < s_cols[c].len) {
+                if (ci < ch)
+                    LedBuff[0] |= (s_cols[c].led_order[ci] << 4) & 0x30;
+                else
+                    LedBuff[0] |= (s_cols[c].led_order[ci] << 6) & 0xC0;
+            }
             break;
         }
     }
     else if (mode == MODE_6STEP_SECONDARY)
     {
-        uint8_t half  = s_cols[col].len / 2;
-        uint8_t idx_a = s_cols[col].leds[0];
-        uint8_t idx_b = s_cols[col].leds[1];
-        if (idx_a < half)
-            LedBuff[0] |= (s_cols[col].led_order[idx_a] << 4) & 0x30;
-        if (idx_b >= half && idx_b < s_cols[col].len)
-            LedBuff[0] |= (s_cols[col].led_order[idx_b] << 6) & 0xC0;
+        uint8_t half = s_cols[col].len / 2;
+        if (idx < half)
+            LedBuff[0] |= (s_cols[col].led_order[idx] << 4) & 0x30;
+        else
+            LedBuff[0] |= (s_cols[col].led_order[idx] << 6) & 0xC0;
         for (uint8_t c = 0; c < 16; c++) {
             if (c == col || s_cols[c].mode != MODE_6STEP || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
+            uint8_t ci = s_cols[c].sel_idx;
             uint8_t ch = s_cols[c].len / 2;
-            uint8_t ca = s_cols[c].leds[0];
-            uint8_t cb = s_cols[c].leds[1];
-            if (ca < ch)
-                LedBuff[0] |= s_cols[c].led_order[ca] & 0x03;
-            if (cb >= ch && cb < s_cols[c].len)
-                LedBuff[0] |= (s_cols[c].led_order[cb] << 2) & 0x0C;
+            if (ci < s_cols[c].len) {
+                if (ci < ch)
+                    LedBuff[0] |= s_cols[c].led_order[ci] & 0x03;
+                else
+                    LedBuff[0] |= (s_cols[c].led_order[ci] << 2) & 0x0C;
+            }
             break;
         }
     }
@@ -404,9 +412,64 @@ void can_latest_broadcast(bool slow)
         if (s_cols[col].len == 0)
             continue;
         fill_ledbuff(col);
-        send_to_col_addrs(col, slow);
+        send_to_col_addrs(col, slow, false);
     }
     memset(LedBuff, 0, sizeof(LedBuff));
+}
+
+// Re-derives all column state from the currently committed prog data and
+// pushes fresh LED states to the bus. Equivalent to what boot does — call
+// after a live config upload (prog's commit notify) so new matrix/column
+// properties apply without a reboot.
+//
+// TODO(concurrency): this rewrites s_cols[]/s_addr_to_col_mask with no lock,
+// while can_task can concurrently be inside can_latest_update() reading the
+// same arrays on a real button press. Worst case: one button press near an
+// upload gets resolved against a half-rewritten config. Low-probability
+// (config upload is a deliberate, infrequent action) but real.
+//
+// A naive fix (wrap s_mutex around this + the state-decision part of
+// can_latest_update()) is NOT safe as a drop-in: can_latest_update() calls
+// videomtx_set() -> the UI's notify callback -> display_lock(), while the
+// LVGL task's ui_encoder_event -> can_latest_notify_route() takes s_mutex
+// while ALREADY holding display_lock(). That's a lock-order inversion
+// (s_mutex->display_lock on one path, display_lock->s_mutex on the other) =
+// deadlock. Fixing this needs either a recursive mutex, or restructuring so
+// s_mutex is never held while calling into anything that can reach
+// display_lock() (i.e. release it before fill_ledbuff()/send_to_col_addrs()
+// and before videomtx_set()). Revisit before shipping if uploads can
+// realistically happen while the bus is live.
+void can_latest_reconfigure(void)
+{
+    can_latest_configure();
+    can_latest_dump();
+    can_latest_broadcast(true);
+}
+
+// Called when a column's route changes from somewhere other than a real
+// button press (currently: the on-device UI matrix editor). Syncs sel_idx/ptr
+// to match the new route and pushes the update to the column's devices.
+//
+// The UI lets the user pick any of the 16 inputs, but a column only knows
+// about the states its matrix config actually gave it (up to 4/6/16 rows
+// depending on mode). If the picked input isn't one of them, there's no sane
+// LED state to send, so this logs a warning and leaves the bus alone — the
+// routing change itself already happened in videomtx regardless.
+void can_latest_notify_route(uint8_t output)
+{
+    if (output >= 16 || s_cols[output].len == 0)
+        return;
+
+    uint8_t found = find_col_state_for_route(output);
+    if (found == 0xFF) {
+        ESP_LOGW(TAG, "col %d: UI route (row %d) not in this column's states — CAN not updated",
+                 output, videomtx_get(output));
+        return;
+    }
+
+    apply_col_state(output, found);
+    fill_ledbuff(output);
+    send_to_col_addrs(output, false, true);
 }
 
 // Called by can_task for every received CAN frame.
@@ -422,7 +485,7 @@ void can_latest_update(const can_frame_t *frame)
 
     uint8_t sel_idx = 0xFF;
 
-    if (frame->header.dlc != 4 || frame->data[3] != 0x18 || frame->data[1] != 0x4)
+    if ((frame->header.dlc != 4 || frame->data[3] != 0x18))
         return;
 
     if(frame->data[1] == 0x4 && frame->data[3] == 0x18)
@@ -483,32 +546,29 @@ void can_latest_update(const can_frame_t *frame)
         {
             if (s_cols[col].ptr >= half) s_cols[col].ptr = 0;
             sel_idx = s_cols[col].ptr;
-            s_cols[col].leds[0] = sel_idx;
             if (++s_cols[col].ptr >= half) s_cols[col].ptr = 0;
         }
         else
         {
             if (s_cols[col].ptr < half) s_cols[col].ptr = half;
             sel_idx = s_cols[col].ptr;
-            s_cols[col].leds[1] = sel_idx;
             if (++s_cols[col].ptr >= s_cols[col].len) s_cols[col].ptr = half;
         }
     }
     else if (s_cols[col].mode == MODE_6STEP_SECONDARY)
     {
+        ESP_LOGI(TAG,"whichLed: %d",whichLed);
         uint8_t half = s_cols[col].len / 2;
-        if (whichLed == 2)
+        if (whichLed == 0)
         {
             if (s_cols[col].ptr >= half) s_cols[col].ptr = 0;
             sel_idx = s_cols[col].ptr;
-            s_cols[col].leds[0] = sel_idx;
             if (++s_cols[col].ptr >= half) s_cols[col].ptr = 0;
         }
-        else  // whichLed == 3
+        else  // whichLed == 1
         {
             if (s_cols[col].ptr < half) s_cols[col].ptr = half;
             sel_idx = s_cols[col].ptr;
-            s_cols[col].leds[1] = sel_idx;
             if (++s_cols[col].ptr >= s_cols[col].len) s_cols[col].ptr = half;
         }
     }
@@ -517,7 +577,7 @@ void can_latest_update(const can_frame_t *frame)
         videomtx_set(col, s_cols[col].rows[sel_idx]);
     }
     fill_ledbuff(col);
-    send_to_col_addrs(col, false);
+    send_to_col_addrs(col, false, false);
 }
 
 // Returns the latest received frame into *out.

@@ -30,6 +30,14 @@ bool can_latest_get(can_frame_t *out);
 void can_latest_configure(void);
 
 /**
+ * Re-derive all column state from the currently committed prog data and push
+ * fresh LED states to the bus — equivalent to what boot does. Call this after
+ * a live matrix/column-properties upload (see prog_set_commit_notify()) so
+ * the new config takes effect without a reboot.
+ */
+void can_latest_reconfigure(void);
+
+/**
  * Send the current state of every configured column to its device addresses.
  * slow=true adds a 15 ms inter-frame delay — use at startup to avoid exhausting
  * the TX pool.  Pass slow=false for runtime refresh requests.
@@ -41,4 +49,16 @@ void can_latest_broadcast(bool slow);
  * Call after can_latest_configure() for startup diagnostics.
  */
 void can_latest_dump(void);
+
+/**
+ * Sync one column's LED state to the bus after its route changed from
+ * somewhere other than a real button press (e.g. the on-device UI matrix
+ * editor). Call this right after videomtx_set_silent() for that output.
+ *
+ * If the new route isn't one of this column's configured states (the UI
+ * allows picking any of the 16 inputs; a column only knows the ones its
+ * matrix config gave it), this logs a warning and does not send anything —
+ * there's no sane LED state to represent that route on the bus.
+ */
+void can_latest_notify_route(uint8_t output);
 

@@ -318,6 +318,23 @@ void can_mon_push(const can_frame_t *f, bool is_tx, bool is_usb)
     }
 }
 
+void can_mon_push_from_ui(const can_frame_t *f, bool is_tx, bool is_usb)
+{
+    if (!s_mutex) return;
+
+    xSemaphoreTake(s_mutex, portMAX_DELAY);
+    s_log[s_head].frame_num = s_frame_counter;
+    s_log[s_head].frame     = *f;
+    s_log[s_head].is_tx     = is_tx;
+    s_log[s_head].is_usb    = is_usb;
+    s_log[s_head].is_sep    = false;
+    s_frame_counter = (s_frame_counter >= 100) ? 0 : s_frame_counter + 1;
+    s_head  = (s_head + 1) % CAN_MON_LOG_SIZE;
+    if (s_count < CAN_MON_LOG_SIZE) s_count++;
+    xSemaphoreGive(s_mutex);
+    // no lv_async_call — caller (ui_encoder_event) refreshes the UI directly if needed
+}
+
 static int s_sep_counter = 0;
 
 void can_mon_push_separator(void)
