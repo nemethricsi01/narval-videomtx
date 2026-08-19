@@ -49,15 +49,6 @@
 #define BOARD_PIN_MTX_UPDATE      8
 #define BOARD_PIN_MTX_RESET       21
 
-// ---- Video routing UART mirror (parallel to the crosspoint IC) ------------
-// TX-only, one frame per crosspoint change: [0x55][addr][channel][0xAA].
-// UART1 chosen deliberately (not UART0) — this project doesn't open any
-// UART itself, but UART0 may be claimed by the system console depending on
-// sdkconfig, so UART1 avoids that ambiguity entirely.
-#define BOARD_VIDEO_UART_PORT      UART_NUM_1
-#define BOARD_VIDEO_UART_BAUD      115200  // TODO: confirm against whatever's listening
-#define BOARD_PIN_VIDEO_UART_TX    39
-
 // ---- Rotary encoder -------------------------------------------------------
 #define BOARD_PIN_ENC_A           40
 #define BOARD_PIN_ENC_B           41

@@ -6,7 +6,6 @@ idf_component_register(
         "drivers/encoder.c"
         "drivers/ws2812.c"
         "drivers/videomtx_ic.c"
-        "drivers/video_uart.c"
         "services/display.c"
         "services/can.c"
         "services/can_latest.c"
@@ -22,5 +21,5 @@ idf_component_register(
     REQUIRES
         esp_lcd driver esp_timer freertos esp_system esp_rom
         nvs_flash
-        esp_driver_twai esp_driver_ledc esp_driver_gpio esp_driver_rmt esp_driver_uart
+        esp_driver_twai esp_driver_ledc esp_driver_gpio esp_driver_rmt
         knob button cherryusb)
