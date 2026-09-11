@@ -42,3 +42,9 @@ esp_err_t can_service_send(const can_frame_t *frame, int timeout_ms);
  * @param q  Queue created with xQueueCreate(depth, sizeof(can_frame_t)).
  */
 void can_service_add_rx_observer(QueueHandle_t q);
+
+/**
+ * Briefly pulse the "frame is ours" LED off (BOARD_PIN_CAN_LED, default on).
+ * Blocks for ~10 ms — call only from task context.
+ */
+void can_led_pulse_ours(void);

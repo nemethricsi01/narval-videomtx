@@ -2,11 +2,14 @@
 #include "drivers/lcd_st7789.h"
 #include "board.h"
 #include "driver/ledc.h"
+#include "driver/gpio.h"
+#include <stdbool.h>
 #include <unistd.h>
 #include <sys/lock.h>
 #include <sys/param.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_timer.h"
 #include "esp_lcd_panel_ops.h"
 #include "driver/spi_master.h"
@@ -28,10 +31,27 @@ static const char *TAG = "display";
 #define LVGL_TASK_MIN_DELAY_MS (1000 / CONFIG_FREERTOS_HZ)
 
 static _lock_t s_lvgl_lock;
+static SemaphoreHandle_t s_frame_flushed_sem;
+static bool s_bl_pwm_ready = false; // LEDC stays off the pin until the first brightness call
 
 // ---------------------------------------------------------------------------
 // Backlight (LEDC)
 // ---------------------------------------------------------------------------
+
+// Plain GPIO, driven statically off — no PWM channel bound to the pin yet.
+// Used for the whole boot/splash-build window, since bringing up the LEDC
+// peripheral this early risked a startup glitch on the backlight; PWM only
+// takes over the pin from display_set_brightness()'s first call, i.e. once
+// something actually starts dimming, keeping the screen dark until then.
+static void bl_gpio_hold_off(void)
+{
+    gpio_config_t cfg = {
+        .pin_bit_mask = 1ULL << BOARD_PIN_LCD_BL,
+        .mode         = GPIO_MODE_OUTPUT,
+    };
+    ESP_ERROR_CHECK(gpio_config(&cfg));
+    gpio_set_level(BOARD_PIN_LCD_BL, !BOARD_LCD_BL_ON_LEVEL);
+}
 
 static void ledc_bl_init(void)
 {
@@ -58,10 +78,37 @@ static void ledc_bl_init(void)
 void display_set_brightness(uint8_t pct)
 {
     if (pct > 100) pct = 100;
-    
+
+    if (!s_bl_pwm_ready) {
+        ledc_bl_init();
+        s_bl_pwm_ready = true;
+    }
+
     uint32_t duty = (uint32_t)pct * pct * 255 / 10000;
     ledc_set_duty(LEDC_MODE, LEDC_CHANNEL, duty);
     ledc_update_duty(LEDC_MODE, LEDC_CHANNEL);
+}
+
+#define FADE_STEP_MS  20  // ~50 steps/sec — smooth without spamming LEDC updates
+
+void display_fade(uint8_t from_pct, uint8_t to_pct, uint32_t duration_ms)
+{
+    if (from_pct > 100) from_pct = 100;
+    if (to_pct   > 100) to_pct   = 100;
+    if (duration_ms == 0) {
+        display_set_brightness(to_pct);
+        return;
+    }
+
+    uint32_t steps = duration_ms / FADE_STEP_MS;
+    if (steps == 0) steps = 1;
+
+    for (uint32_t i = 1; i <= steps; i++) {
+        int32_t pct = (int32_t)from_pct + ((int32_t)to_pct - from_pct) * (int32_t)i / (int32_t)steps;
+        display_set_brightness((uint8_t)pct);
+        vTaskDelay(pdMS_TO_TICKS(FADE_STEP_MS));
+    }
+    display_set_brightness(to_pct); // land exactly on target regardless of rounding
 }
 
 // ---------------------------------------------------------------------------
@@ -72,8 +119,22 @@ static bool on_color_trans_done(esp_lcd_panel_io_handle_t panel_io,
                                  esp_lcd_panel_io_event_data_t *edata,
                                  void *user_ctx)
 {
-    lv_display_flush_ready((lv_display_t *)user_ctx);
-    return false;
+    lv_display_t *disp = (lv_display_t *)user_ctx;
+
+    // The area that just finished transferring is the last one of this
+    // refresh round exactly when lv_display_flush_is_last() is true here
+    // (must be checked before lv_display_flush_ready() lets LVGL start the
+    // next round) — i.e. the whole screen's pixels have now actually
+    // reached the panel, not just been queued. display_wait_next_frame_flushed()
+    // blocks on this so callers can avoid dimming the backlight up over a
+    // frame that isn't fully drawn yet.
+    BaseType_t woken = pdFALSE;
+    if (lv_display_flush_is_last(disp)) {
+        xSemaphoreGiveFromISR(s_frame_flushed_sem, &woken);
+    }
+
+    lv_display_flush_ready(disp);
+    return woken == pdTRUE;
 }
 
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
@@ -110,7 +171,10 @@ static void lvgl_task(void *arg)
 
 esp_err_t display_init(lv_display_t **out_disp)
 {
-    ledc_bl_init();   // backlight at 0% until ui_init applies the saved brightness
+    s_frame_flushed_sem = xSemaphoreCreateBinary();
+    assert(s_frame_flushed_sem);
+
+    bl_gpio_hold_off();   // static off; PWM takes over on the first display_set_brightness() call
 
     esp_lcd_panel_handle_t    panel  = NULL;
     esp_lcd_panel_io_handle_t io     = NULL;
@@ -163,4 +227,10 @@ void display_lock(void)
 void display_unlock(void)
 {
     _lock_release(&s_lvgl_lock);
+}
+
+bool display_wait_next_frame_flushed(uint32_t timeout_ms)
+{
+    xSemaphoreTake(s_frame_flushed_sem, 0); // drain a stale/unrelated pending signal
+    return xSemaphoreTake(s_frame_flushed_sem, pdMS_TO_TICKS(timeout_ms)) == pdTRUE;
 }

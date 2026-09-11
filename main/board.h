@@ -18,8 +18,10 @@
 #define BOARD_PIN_RTC_SDA          5
 #define BOARD_PIN_RTC_SCL          4
 
-// ---- WS2812 RGB LED -------------------------------------------------------
-#define BOARD_PIN_WS2812          48
+// ---- CAN "frame is ours" LED (plain LED, not WS2812) -----------------------
+// Default on; pulses off briefly whenever can_latest_update() accepts a
+// received frame as belonging to one of this device's configured columns.
+#define BOARD_PIN_CAN_LED         48
 
 // ---- W5500 Ethernet (SPI3) ------------------------------------------------
 #define BOARD_ETH_SPI_HOST        SPI3_HOST

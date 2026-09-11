@@ -46,7 +46,7 @@ static void on_encoder_event(encoder_event_t event, void *user_data)
 
 void app_main(void)
 {
-    vTaskDelay(pdMS_TO_TICKS(1000)); // let the dust settle after boot
+    //vTaskDelay(pdMS_TO_TICKS(1000)); // let the dust settle after boot
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -75,6 +75,10 @@ void app_main(void)
     ESP_ERROR_CHECK(encoder_init(on_encoder_event, NULL));
 
     // Blink WS2812 5x white at power-up
+    // Disabled — GPIO48 is now the CAN "frame is ours" LED (see can.c),
+    // driven as a plain GPIO by can_service_init() above; the RMT-based
+    // WS2812 driver would conflict with that on the same pin.
+    /*
     if (ws2812_init(BOARD_PIN_WS2812) == ESP_OK) {
         for (int i = 0; i < 3; i++) {
             ws2812_set(128, 128, 128);
@@ -85,6 +89,7 @@ void app_main(void)
         ws2812_set(0, 32, 0);
         ws2812_deinit();
     }
+    */
 
     lv_display_t *disp = NULL;
     ESP_ERROR_CHECK(display_init(&disp));

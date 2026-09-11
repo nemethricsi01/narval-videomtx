@@ -9,7 +9,7 @@ esp_err_t twai_can_init(twai_node_handle_t *out_node)
 {
     // Create node with a placeholder bitrate; the exact timing is applied
     // below via reconfig before enabling (new API cannot express non-standard
-    // bitrates like 80 MHz / (584 * 14) ≈ 9784.7 bps through the basic config).
+    // bitrates like 80 MHz / (512 * 16) ≈ 9765.6 bps through the basic config).
     twai_onchip_node_config_t cfg = {
         .io_cfg = {
             .tx                = BOARD_PIN_CAN_TX,
@@ -32,18 +32,25 @@ esp_err_t twai_can_init(twai_node_handle_t *out_node)
     };
     ESP_ERROR_CHECK(twai_new_node_onchip(&cfg, out_node));
 
-    // Override with exact BRP/TSEG values from the original config.
-    // prop_seg = 0: legacy tseg_1 already captured the full phase-1 segment.
+    // Matches the original PIC32 CAN_BIT_CONFIG: propSeg=2, phaseSeg1=7,
+    // phaseSeg2=6, sjw=1, sample3Time=TRUE, target 9765 bps.
+    // total = 1(sync) + prop_seg(2) + tseg_1(7) + tseg_2(6) = 16 TQ,
+    // sample point = (1+2+7)/16 = 62.5% — same as the original.
+    // brp=512 gives 80MHz / (512*16) = 9765.625 bps, ~0.006% off target
+    // (the previous 14-TQ config, which dropped prop_seg entirely, landed at
+    // 9784.7 bps — ~0.2% off — and sampled at 57.1% instead of 62.5%).
+    // ssp_offset != 0 enables triple-sampling on this HAL, matching sample3Time.
     const twai_timing_advanced_config_t timing = {
-        .brp     = 584,
-        .prop_seg = 0,
-        .tseg_1  = 7,
-        .tseg_2  = 6,
-        .sjw     = 1,
+        .brp        = 512,
+        .prop_seg   = 2,
+        .tseg_1     = 7,
+        .tseg_2     = 6,
+        .sjw        = 1,
+        .ssp_offset = 1,
     };
     ESP_ERROR_CHECK(twai_node_reconfig_timing(*out_node, &timing, NULL));
 
     // Node is left stopped so the caller can register callbacks before enabling.
-    ESP_LOGI(TAG, "configured (80 MHz / (584 * 14) ≈ 9784 bps, tx_queue=10)");
+    ESP_LOGI(TAG, "configured (80 MHz / (512 * 16) ≈ 9765.6 bps, tx_queue=10)");
     return ESP_OK;
 }

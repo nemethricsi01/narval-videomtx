@@ -342,6 +342,32 @@ static void send_to_col_addrs(uint8_t col, bool slow, bool from_ui)
     }
 }
 
+// Finds the column paired with `col` as its NORMAL/6STEP "secondary" partner:
+// one physical device driving two logical outputs (see column_properties.h).
+// That pairing is identified by the two columns sharing a device address —
+// the same PROP_DEV_ADDR_* list resolve_col() already uses to disambiguate
+// which button on one device was pressed — NOT by any relationship between
+// their LED base addresses. base_addr only controls where a column's own
+// LED bits land on the wire (and, by installation convention, primary and
+// secondary are given adjacent base_addr values so those bits don't
+// collide within a shared layer) — it doesn't identify which two columns
+// are paired.
+// Returns 0xFF if no column sharing a device address is in companion_mode.
+static uint8_t find_companion_col(uint8_t col, uint8_t companion_mode)
+{
+    for (uint8_t a = 0; a < 4; a++) {
+        uint8_t addr = s_cols[col].addrToSendTo[a];
+        if (addr == 0xFF) continue;
+        uint16_t mask = s_addr_to_col_mask[addr] & ~(1u << col);
+        while (mask) {
+            uint8_t c = __builtin_ctz(mask);
+            mask &= mask - 1;
+            if (s_cols[c].mode == companion_mode) return c;
+        }
+    }
+    return 0xFF;
+}
+
 // Reconstruct LedBuff for column col from its stored sel_idx, without advancing state.
 static void fill_ledbuff(uint8_t col)
 {
@@ -357,10 +383,14 @@ static void fill_ledbuff(uint8_t col)
         uint8_t byte_idx = idx / 4;
         uint8_t bit = is_green ? (idx % 4) * 2 : (idx % 4) * 2 + 1;
         LedBuff[byte_idx] |= (1u << bit);
-        // merge companion (same base_addr, opposite RADIO mode)
+        // Merge companion: per column_properties.h, a RADIO_RED bank shares
+        // its RADIO_GREEN partner's LED groups by being configured with the
+        // *exact same* base_addr — not merely "close enough to land in the
+        // same baseAddressToLedLayer() bucket", which can also match an
+        // unrelated station's column of the same mode sharing that bucket.
         uint8_t comp = is_green ? MODE_RADIO_RED : MODE_RADIO_GREEN;
         for (uint8_t c = 0; c < 16; c++) {
-            if (c == col || s_cols[c].mode != comp || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
+            if (c == col || s_cols[c].mode != comp || s_cols[c].base_addr != s_cols[col].base_addr) continue;
             uint8_t ci = s_cols[c].sel_idx;
             if (ci < s_cols[c].len) {
                 uint8_t cb = ci / 4;
@@ -373,21 +403,19 @@ static void fill_ledbuff(uint8_t col)
     else if (mode == MODE_NORMAL)
     {
         LedBuff[0] |= s_cols[col].led_order[idx] & 0x03;
-        for (uint8_t c = 0; c < 16; c++) {
-            if (c == col || s_cols[c].mode != MODE_NORMAL_SECONDARY || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
-            uint8_t ci = s_cols[c].sel_idx;
-            if (ci < s_cols[c].len) LedBuff[0] |= (s_cols[c].led_order[ci] << 2) & 0x0C;
-            break;
+        uint8_t comp_col = find_companion_col(col, MODE_NORMAL_SECONDARY);
+        if (comp_col != 0xFF) {
+            uint8_t ci = s_cols[comp_col].sel_idx;
+            if (ci < s_cols[comp_col].len) LedBuff[0] |= (s_cols[comp_col].led_order[ci] << 2) & 0x0C;
         }
     }
     else if (mode == MODE_NORMAL_SECONDARY)
     {
         LedBuff[0] |= (s_cols[col].led_order[idx] << 2) & 0x0C;
-        for (uint8_t c = 0; c < 16; c++) {
-            if (c == col || s_cols[c].mode != MODE_NORMAL || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
-            uint8_t ci = s_cols[c].sel_idx;
-            if (ci < s_cols[c].len) LedBuff[0] |= s_cols[c].led_order[ci] & 0x03;
-            break;
+        uint8_t comp_col = find_companion_col(col, MODE_NORMAL);
+        if (comp_col != 0xFF) {
+            uint8_t ci = s_cols[comp_col].sel_idx;
+            if (ci < s_cols[comp_col].len) LedBuff[0] |= s_cols[comp_col].led_order[ci] & 0x03;
         }
     }
     else if (mode == MODE_6STEP)
@@ -397,17 +425,16 @@ static void fill_ledbuff(uint8_t col)
             LedBuff[0] |= s_cols[col].led_order[idx] & 0x03;
         else
             LedBuff[0] |= (s_cols[col].led_order[idx] << 2) & 0x0C;
-        for (uint8_t c = 0; c < 16; c++) {
-            if (c == col || s_cols[c].mode != MODE_6STEP_SECONDARY || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
-            uint8_t ci = s_cols[c].sel_idx;
-            uint8_t ch = s_cols[c].len / 2;
-            if (ci < s_cols[c].len) {
+        uint8_t comp_col = find_companion_col(col, MODE_6STEP_SECONDARY);
+        if (comp_col != 0xFF) {
+            uint8_t ci = s_cols[comp_col].sel_idx;
+            uint8_t ch = s_cols[comp_col].len / 2;
+            if (ci < s_cols[comp_col].len) {
                 if (ci < ch)
-                    LedBuff[0] |= (s_cols[c].led_order[ci] << 4) & 0x30;
+                    LedBuff[0] |= (s_cols[comp_col].led_order[ci] << 4) & 0x30;
                 else
-                    LedBuff[0] |= (s_cols[c].led_order[ci] << 6) & 0xC0;
+                    LedBuff[0] |= (s_cols[comp_col].led_order[ci] << 6) & 0xC0;
             }
-            break;
         }
     }
     else if (mode == MODE_6STEP_SECONDARY)
@@ -417,17 +444,16 @@ static void fill_ledbuff(uint8_t col)
             LedBuff[0] |= (s_cols[col].led_order[idx] << 4) & 0x30;
         else
             LedBuff[0] |= (s_cols[col].led_order[idx] << 6) & 0xC0;
-        for (uint8_t c = 0; c < 16; c++) {
-            if (c == col || s_cols[c].mode != MODE_6STEP || baseAddressToLedLayer(s_cols[c].base_addr) != baseAddressToLedLayer(s_cols[col].base_addr)) continue;
-            uint8_t ci = s_cols[c].sel_idx;
-            uint8_t ch = s_cols[c].len / 2;
-            if (ci < s_cols[c].len) {
+        uint8_t comp_col = find_companion_col(col, MODE_6STEP);
+        if (comp_col != 0xFF) {
+            uint8_t ci = s_cols[comp_col].sel_idx;
+            uint8_t ch = s_cols[comp_col].len / 2;
+            if (ci < s_cols[comp_col].len) {
                 if (ci < ch)
-                    LedBuff[0] |= s_cols[c].led_order[ci] & 0x03;
+                    LedBuff[0] |= s_cols[comp_col].led_order[ci] & 0x03;
                 else
-                    LedBuff[0] |= (s_cols[c].led_order[ci] << 2) & 0x0C;
+                    LedBuff[0] |= (s_cols[comp_col].led_order[ci] << 2) & 0x0C;
             }
-            break;
         }
     }
 }
@@ -535,6 +561,8 @@ void can_latest_update(const can_frame_t *frame)
     uint8_t col = resolve_col(event, prefer_red);
     if (col == 0xFF)
         return;
+
+    can_led_pulse_ours();   // frame maps to a column we manage — it's ours
 
     if (!prefer_red && s_cols[col].mode == MODE_RADIO_RED)
     {

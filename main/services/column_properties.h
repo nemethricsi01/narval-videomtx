@@ -140,6 +140,22 @@
 #define MODE_NORMAL_SECONDARY  4  /* same as MODE_NORMAL; LED group base address is +1 */
 #define MODE_6STEP_SECONDARY   5  /* same as MODE_6STEP; LED group base address is +2 */
 
+/*
+ * A _SECONDARY column exists so one physical device (one set of prop[2..5]
+ * device addresses) can drive two logical outputs. That pairing — "which
+ * column is my secondary/primary" — is determined by the two columns
+ * sharing a device address, the same addresses used for button-press
+ * disambiguation (see resolve_col() / find_companion_col() in
+ * can_latest.c), NOT by comparing their prop[1] (LED base address) values.
+ *
+ * The +1 / +2 offsets above are still real and must still be followed: a
+ * NORMAL column occupies 1 LED-group slot and 6STEP occupies 2 (one per
+ * button), so the secondary's base address needs that offset to land in a
+ * *different, non-overlapping* slot within the same shared LED layer.
+ * They just aren't how firmware finds the pairing — get the device
+ * addresses right and the base addresses non-overlapping, independently.
+ */
+
 /* prop index names for readability */
 #define PROP_MODE          0
 #define PROP_LED_BASE_ADDR 1

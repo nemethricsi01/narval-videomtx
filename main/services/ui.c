@@ -6,6 +6,8 @@
 #include "services/can_latest.h"
 #include "drivers/encoder.h"
 #include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -16,6 +18,7 @@ static const char *TAG = "ui";
 // ---------------------------------------------------------------------------
 
 typedef enum {
+    SCREEN_SPLASH,
     SCREEN_MAIN,
     SCREEN_MENU,
     SCREEN_BRIGHTNESS,
@@ -23,7 +26,7 @@ typedef enum {
     SCREEN_CAN_SETTINGS,
 } ui_screen_t;
 
-static ui_screen_t  s_current_screen = SCREEN_MAIN;
+static ui_screen_t  s_current_screen = SCREEN_SPLASH;
 static lv_indev_t  *s_enc_indev      = NULL;
 
 // Groups
@@ -68,6 +71,9 @@ static bool      s_can_follow = true;
 
 // CAN Settings screen
 static lv_obj_t *s_can_settings_scr = NULL;
+
+// Splash screen (shown at boot; see build_splash_screen())
+static lv_obj_t *s_splash_scr = NULL;
 
 // Single rotation accumulator: 2 raw CW/CCW events = 1 detent = 1 step.
 // Reset on every screen transition so there is never leftover state.
@@ -395,6 +401,58 @@ static void build_can_settings_screen(void)
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -4);
 }
 
+#define SPLASH_BOTTOM_PCT  28  // white box height, as % of screen height
+
+// Boot splash: black box (100-SPLASH_BOTTOM_PCT% of the screen, top) with
+// white "NARVAL SYSTEMS" / "MXV 16x16", white box (SPLASH_BOTTOM_PCT%,
+// bottom) with black "AHD/CVBS VIDEOMATRIX". Text is centered within its
+// own box, not the screen. Purely static — no live data to update later.
+static void build_splash_screen(void)
+{
+    s_splash_scr = lv_obj_create(NULL);
+    lv_obj_set_style_bg_color(s_splash_scr, lv_color_black(), 0);
+    lv_obj_set_style_pad_all(s_splash_scr, 0, 0);
+    lv_obj_set_scrollbar_mode(s_splash_scr, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_t *top_box = lv_obj_create(s_splash_scr);
+    lv_obj_set_size(top_box, LV_PCT(100), LV_PCT(100 - SPLASH_BOTTOM_PCT));
+    lv_obj_align(top_box, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_bg_color(top_box, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(top_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(top_box, 0, 0);
+    lv_obj_set_style_radius(top_box, 0, 0);
+    lv_obj_set_style_pad_all(top_box, 0, 0);
+    lv_obj_set_scrollbar_mode(top_box, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(top_box, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(top_box, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *title = lv_label_create(top_box);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_label_set_text(title, "NARVAL SYSTEMS");
+
+    lv_obj_t *subtitle = lv_label_create(top_box);
+    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(subtitle, lv_color_white(), 0);
+    lv_label_set_text(subtitle, "MXV 16x16");
+
+    lv_obj_t *bottom_box = lv_obj_create(s_splash_scr);
+    lv_obj_set_size(bottom_box, LV_PCT(100), LV_PCT(SPLASH_BOTTOM_PCT));
+    lv_obj_align(bottom_box, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(bottom_box, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(bottom_box, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(bottom_box, 0, 0);
+    lv_obj_set_style_radius(bottom_box, 0, 0);
+    lv_obj_set_style_pad_all(bottom_box, 0, 0);
+    lv_obj_set_scrollbar_mode(bottom_box, LV_SCROLLBAR_MODE_OFF);
+
+    lv_obj_t *bottom_label = lv_label_create(bottom_box);
+    lv_obj_set_style_text_font(bottom_label, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_color(bottom_label, lv_color_black(), 0);
+    lv_label_set_text(bottom_label, "AHD/CVBS VIDEOMATRIX");
+    lv_obj_center(bottom_label);
+}
+
 // ---------------------------------------------------------------------------
 // Screen transitions — each resets the accumulator to avoid leftover state
 // ---------------------------------------------------------------------------
@@ -465,6 +523,9 @@ void ui_encoder_event(void *arg)
     int step = accum_step(event);
 
     switch (s_current_screen) {
+
+    case SCREEN_SPLASH:
+        break; // inert during the boot splash — s_empty_group already blocks focus nav
 
     case SCREEN_MAIN:
         if (step != 0) {
@@ -582,18 +643,47 @@ esp_err_t ui_init(lv_indev_t *encoder_indev, const settings_t *s)
     build_brightness_screen();
     build_can_monitor_screen();
     build_can_settings_screen();
+    build_splash_screen();
 
-    display_set_brightness((uint8_t)s_brightness_pct);
-    ESP_LOGI(TAG, "brightness set to %d%%", s_brightness_pct);
-    brightness_refresh();
+    // No display_set_brightness()/brightness_refresh() call here: the
+    // backlight is a static plain-GPIO on at this point (see bl_gpio_hold_on()
+    // in display.c) and PWM must not take over the pin until the splash
+    // choreography below actually starts dimming. build_brightness_screen()
+    // already seeded the brightness screen's bar/label from s_brightness_pct.
+
+    s_current_screen = SCREEN_SPLASH;
+    lv_indev_set_group(s_enc_indev, s_empty_group);
+    lv_screen_load(s_splash_scr);
+
+    // Splash choreography: 2 s dim up, 3 s hold, 1 s dim down, swap to the
+    // matrix screen while dark, then 1 s dim up over it. Each fade/delay
+    // blocks, so release the LVGL lock around them — otherwise the LVGL
+    // task can't render anything (including the splash we just loaded)
+    // until the whole sequence finishes.
+    //
+    // display_wait_next_frame_flushed() blocks until the just-loaded screen's
+    // pixels have actually reached the panel before the fade starts ramping
+    // brightness — without it, the backlight was ramping up concurrently
+    // with LVGL still drawing the first frame, which showed as a flicker.
+    display_unlock();
+    display_wait_next_frame_flushed(500);
+    display_fade(0, (uint8_t)s_brightness_pct, 2000);
+    vTaskDelay(pdMS_TO_TICKS(3000));
+    display_fade((uint8_t)s_brightness_pct, 0, 1000);
+    display_lock();
 
     s_current_screen = SCREEN_MAIN;
-    lv_indev_set_group(s_enc_indev, s_empty_group);
     lv_screen_load(s_main_scr);
 
+    display_unlock();
+    display_wait_next_frame_flushed(500);
+    display_fade(0, (uint8_t)s_brightness_pct, 1000);
+    display_lock();
+    ESP_LOGI(TAG, "splash done, brightness at %d%%", s_brightness_pct);
+
     // Re-apply brightness from the LVGL task on the first rendered frame.
-    // Guards against any timing issue that prevents the direct call above
-    // from taking effect before the first lv_timer_handler() run.
+    // Guards against any timing issue that prevents the fade above from
+    // taking effect before the first lv_timer_handler() run.
     lv_async_call(brightness_init_cb, NULL);
 
     can_mon_set_notify(can_monitor_refresh);
